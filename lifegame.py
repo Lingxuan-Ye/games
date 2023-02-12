@@ -1,8 +1,15 @@
-import numpy as np
-from time import sleep
+"""
+Lifegame
+
+Use bit to represent status may be more efficient but, nah.
+"""
 import os
+from time import sleep
+
+import numpy as np
 
 shape = (40, 40)
+rlocs = [(x, y) for x in (-1, 0, 1) for y in (-1, 0, 1) if x * y != 0]
 frame = np.random.randint(0, 2, (shape))
 cache = np.array(frame)
 
@@ -13,11 +20,10 @@ def fprint(frame):
 
 
 def fgen():
-    global frame
     loc = np.array([0, 0], dtype=np.int8)
     for index, status in np.ndenumerate(cache):
         count = 0
-        for rloc in ((x, y) for x in (-1, 0, 1) for y in (-1, 0, 1)):
+        for rloc in rlocs:
             if rloc == (0, 0):
                 continue
             loc[0], loc[1] = index[0] + rloc[0], index[1] + rloc[1]
