@@ -9,7 +9,7 @@ from time import sleep
 import numpy as np
 
 shape = (40, 40)
-rlocs = [(x, y) for x in (-1, 0, 1) for y in (-1, 0, 1) if x * y != 0]
+rlocs = [(x, y) for x in (-1, 0, 1) for y in (-1, 0, 1) if x or y]
 frame = np.random.randint(0, 2, (shape))
 cache = np.array(frame)
 
