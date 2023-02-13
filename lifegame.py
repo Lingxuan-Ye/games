@@ -120,7 +120,9 @@ def main() -> None:
         choices=('alpha', 'block', 'digit', 'emoji'),
         metavar=''
     )
+
     args = parser.parse_args()
+    
     lifegame = LifeGame((args.nrows, args.ncols), args.symbols)
     lifegame.fps = args.fps
     lifegame.run()
