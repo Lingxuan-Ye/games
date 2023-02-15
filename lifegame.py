@@ -5,16 +5,18 @@ Use bit to represent status may be more efficient but, nah.
 """
 import argparse
 import asyncio
-import subprocess
 from random import choice
-from typing import Literal, Sequence
+from typing import Literal
 
 import numpy as np
 
 
 class LifeGame:
 
-    RLOCS = np.array([[x, y] for x in (-1, 0, 1) for y in (-1, 0, 1) if x | y])
+    RLOCS = np.array(
+        [[x, y] for x in (-1, 0, 1) for y in (-1, 0, 1) if x | y],
+        dtype=np.int8
+    )
     SYMBOLS = {
         'dead': {
             'alpha': 'O',
@@ -30,8 +32,8 @@ class LifeGame:
         }
     }
 
-    shape: tuple[int, int]
-    frames_per_second: float
+    shape: np.ndarray
+    frames_per_second: int | float
 
     __symbols: tuple[str, str]
     __row_offset: int
@@ -41,29 +43,30 @@ class LifeGame:
 
     __next_frame: np.ndarray
     __current_frame: np.ndarray
-    __loc: np.ndarray
+    __locs: np.ndarray
     __to_print: list[str]
 
     def __init__(
         self,
         nrows: int = 32,
         ncols: int = 32,
-        frames_per_second: float = 24.0,
+        frames_per_second: int | float = 10,
         symbol_type: Literal['alpha', 'block', 'digit', 'emoji'] = 'block',
         row_offset: int = 1,
         col_offset: int = 2
     ) -> None:
 
-        self.shape = (nrows, ncols)
+        self.shape = np.array([nrows, ncols])
         self.frames_per_second = frames_per_second
         self.row_offset = row_offset
         self.col_offset = col_offset
 
         self.set_symbols(symbol_type)
 
-        self.__current_frame = np.random.choice((0, 1), self.shape)
-        self.__next_frame = self.__current_frame.copy()
-        self.__loc = np.empty(2, dtype=np.int8)
+        init_frame = np.random.randint(0, 2, self.shape, dtype=np.int8)
+        self.__current_frame = init_frame
+        self.__next_frame = init_frame.copy()
+        self.__locs = np.empty_like(self.RLOCS)
         self.__to_print = []
 
     @property
@@ -98,44 +101,40 @@ class LifeGame:
         self.__left_padding = ' ' * __value
         self.__col_offset = __value
 
-    async def generate(self) -> None:
-        for index, is_alive in np.ndenumerate(self.__current_frame):
-            count = 0
-            for rloc in self.RLOCS:
-                self.__loc[:] = (index + rloc) % self.shape
-                if self.__current_frame[*self.__loc]:
-                    count += 1
-            if (not is_alive) and (count == 3):
-                self.__next_frame[index] = 1
-            elif is_alive and (count not in {2, 3}):
-                self.__next_frame[index] = 0
-
-    @staticmethod
-    async def __print_async(message):
-        await asyncio.get_event_loop().run_in_executor(None, print, message)
-
-    async def print(self) -> None:
+    async def print(self, *args, **kwargs) -> None:
+        process = await asyncio.create_subprocess_shell('clear || cls')
+        await process.wait()
         self.__to_print.clear()
         for row in self.__current_frame:
             self.__to_print.append(
                 self.__left_padding + ''.join(self.__symbols[i] for i in row)
             )
         message = self.__top_padding + '\n'.join(self.__to_print)
-        await self.__print_async(message)
+        print(message, *args, **kwargs)
 
-    async def __run_async(self) -> None:
+    async def generate(self) -> None:
+        for index, is_alive in np.ndenumerate(self.__current_frame):
+            self.__locs[:] = (
+                np.array([index], dtype=np.int8) + self.RLOCS
+            ) % self.shape.reshape(1, 2)  # mod in case index out of range
+            count = self.__current_frame[tuple(self.__locs.T)].sum()
+            if (not is_alive) and (count == 3):
+                self.__next_frame[index] = 1
+            elif is_alive and (count not in {2, 3}):
+                self.__next_frame[index] = 0
+
+    async def __run(self) -> None:
         frame_duration = 1 / self.frames_per_second
         while True:
-            subprocess.run('clear || cls', shell=True)
             await asyncio.gather(
-                self.generate(),
+                asyncio.sleep(frame_duration),
                 self.print(),
-                asyncio.sleep(frame_duration)
+                self.generate()
             )
             self.__current_frame[:] = self.__next_frame
 
     def run(self) -> None:
-        asyncio.run(self.__run_async())
+        asyncio.run(self.__run())
 
 
 def main() -> None:
@@ -160,7 +159,8 @@ def main() -> None:
         '--fps',
         type=float,
         help='frames per second',
-        metavar=''
+        metavar='',
+        dest='frames_per_second'
     )
 
     parser.add_argument(
