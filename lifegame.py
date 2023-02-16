@@ -16,13 +16,13 @@ class LifeGame:
 
     SYMBOLS = {
         'dead': {
-            'alpha': 'O',
+            'alpha': 'X',
             'block': '⬜',
             'digit': '0',
             'emoji': '😅😇🤪😴🤢🤮🥶😰😭'
         },
         'alive': {
-            'alpha': 'X',
+            'alpha': 'O',
             'block': '⬛',
             'digit': '1',
             'emoji': '🤣🥰😘😋🤗🤤🥵🥳😤'
@@ -51,14 +51,16 @@ class LifeGame:
         frames_per_second: int | float = 10,
         symbol_type: Literal['alpha', 'block', 'digit', 'emoji'] = 'block',
         row_offset: int = 1,
-        col_offset: int = 2
+        col_offset: int = 2,
+        seed: int | None = None
     ) -> None:
 
         self.shape = np.array([nrows, ncols])
         self.frames_per_second = frames_per_second
         self.row_offset = row_offset
         self.col_offset = col_offset
-
+        if seed is not None:
+            self.seed = seed
         self.set_symbols(symbol_type)
 
         init_frame = np.random.randint(0, 2, self.shape, dtype=np.uint8)
@@ -101,6 +103,14 @@ class LifeGame:
     def col_offset(self, __value: int) -> None:
         self.__left_padding = ' ' * __value
         self.__col_offset = __value
+
+    @property
+    def seed(self) -> int:
+        return np.random.get_state()[1][0]  # type: ignore
+
+    @seed.setter
+    def seed(self, __value: int) -> None:
+        np.random.seed(__value)
 
     async def print(self, *args, **kwargs) -> None:
         self.__to_print.clear()
@@ -145,7 +155,8 @@ class LifeGame:
             'fps': 'frames per second',
             'symbol-type': 'symbols to represent status (dead / alive)',
             'row-offset': 'margin width to the top',
-            'col-offset': 'margin width to the left'
+            'col-offset': 'margin width to the left',
+            'seed': 'set seed (this does not affect emoji selection)'
         }
 
         parser = argparse.ArgumentParser('Life Game')
@@ -196,6 +207,14 @@ class LifeGame:
             '--col-offset',
             type=int,
             help=HELP['col-offset'],
+            metavar=''
+        )
+
+        parser.add_argument(
+            '-S',
+            '--seed',
+            type=int,
+            help=HELP['seed'],
             metavar=''
         )
 
