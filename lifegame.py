@@ -5,6 +5,7 @@ Use bit to represent status may be more efficient but, nah.
 """
 import argparse
 import asyncio
+import subprocess
 from random import choice
 from typing import Literal
 
@@ -13,10 +14,6 @@ import numpy as np
 
 class LifeGame:
 
-    RLOCS = np.array(
-        [[x, y] for x in (-1, 0, 1) for y in (-1, 0, 1) if x | y],
-        dtype=np.int8
-    )
     SYMBOLS = {
         'dead': {
             'alpha': 'O',
@@ -31,6 +28,7 @@ class LifeGame:
             'emoji': '🤣🥰😘😋🤗🤤🥵🥳😤'
         }
     }
+    RLOCS = np.array([(-1, 0, 1)] * 2, dtype=np.int8)
 
     shape: np.ndarray
     frames_per_second: int | float
@@ -43,8 +41,8 @@ class LifeGame:
 
     __next_frame: np.ndarray
     __current_frame: np.ndarray
-    __locs: np.ndarray
     __to_print: list[str]
+    __locs: np.ndarray
 
     def __init__(
         self,
@@ -63,11 +61,14 @@ class LifeGame:
 
         self.set_symbols(symbol_type)
 
-        init_frame = np.random.randint(0, 2, self.shape, dtype=np.int8)
+        init_frame = np.random.randint(0, 2, self.shape, dtype=np.uint8)
         self.__current_frame = init_frame
         self.__next_frame = init_frame.copy()
-        self.__locs = np.empty_like(self.RLOCS)
         self.__to_print = []
+        self.__locs = np.empty(
+            shape=(2, 3),
+            dtype=np.min_scalar_type(np.max(self.shape))
+        )
 
     @property
     def symbols(self) -> tuple[str, str]:
@@ -102,22 +103,20 @@ class LifeGame:
         self.__col_offset = __value
 
     async def print(self, *args, **kwargs) -> None:
-        process = await asyncio.create_subprocess_shell('clear || cls')
-        await process.wait()
         self.__to_print.clear()
         for row in self.__current_frame:
             self.__to_print.append(
                 self.__left_padding + ''.join(self.__symbols[i] for i in row)
             )
         message = self.__top_padding + '\n'.join(self.__to_print)
-        print(message, *args, **kwargs)
+        print(f'\033[1;1H{message}', *args, **kwargs)
 
     async def generate(self) -> None:
         for index, is_alive in np.ndenumerate(self.__current_frame):
             self.__locs[:] = (
-                np.array([index], dtype=np.int8) + self.RLOCS
-            ) % self.shape.reshape(1, 2)  # mod in case index out of range
-            count = self.__current_frame[tuple(self.__locs.T)].sum()
+                np.array(list(index)).reshape(2, 1) + self.RLOCS
+            ) % self.shape.reshape(2, 1)  # mod in case index out of range
+            count = self.__current_frame[np.ix_(*self.__locs)].sum() - is_alive
             if (not is_alive) and (count == 3):
                 self.__next_frame[index] = 1
             elif is_alive and (count not in {2, 3}):
@@ -125,6 +124,7 @@ class LifeGame:
 
     async def __run(self) -> None:
         frame_duration = 1 / self.frames_per_second
+        subprocess.run('clear || cls', shell=True)
         while True:
             await asyncio.gather(
                 asyncio.sleep(frame_duration),
@@ -136,61 +136,75 @@ class LifeGame:
     def run(self) -> None:
         asyncio.run(self.__run())
 
+    @classmethod
+    def run_from_command_line(cls) -> None:
 
-def main() -> None:
+        HELP = {
+            'nrows': 'number of rows',
+            'ncols': 'number of columns',
+            'fps': 'frames per second',
+            'symbol-type': 'symbols to represent status (dead / alive)',
+            'row-offset': 'margin width to the top',
+            'col-offset': 'margin width to the left'
+        }
 
-    parser = argparse.ArgumentParser('Life Game')
+        parser = argparse.ArgumentParser('Life Game')
 
-    parser.add_argument(
-        '--nrows',
-        type=int,
-        help='number of rows',
-        metavar=''
-    )
+        parser.add_argument(
+            '-r',
+            '--nrows',
+            type=int,
+            help=HELP['nrows'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--ncols',
-        type=int,
-        help='number of columns',
-        metavar=''
-    )
+        parser.add_argument(
+            '-c',
+            '--ncols',
+            type=int,
+            help=HELP['ncols'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--fps',
-        type=float,
-        help='frames per second',
-        metavar='',
-        dest='frames_per_second'
-    )
+        parser.add_argument(
+            '-f',
+            '--fps',
+            type=float,
+            help=HELP['fps'],
+            metavar='',
+            dest='frames_per_second'
+        )
 
-    parser.add_argument(
-        '--symbol-type',
-        choices=('alpha', 'block', 'digit', 'emoji'),
-        help='symbols to represent status (dead / alive)',
-        metavar=''
-    )
+        parser.add_argument(
+            '-s',
+            '--symbol-type',
+            choices=('alpha', 'block', 'digit', 'emoji'),
+            help=HELP['symbol-type'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--row-offset',
-        type=int,
-        help='margin width to the top',
-        metavar=''
-    )
+        parser.add_argument(
+            '-R',
+            '--row-offset',
+            type=int,
+            help=HELP['row-offset'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--col-offset',
-        type=int,
-        help='margin width to the left',
-        metavar=''
-    )
+        parser.add_argument(
+            '-C',
+            '--col-offset',
+            type=int,
+            help=HELP['col-offset'],
+            metavar=''
+        )
 
-    args = dict(filter(
-        lambda x: x[1] is not None,
-        parser.parse_args()._get_kwargs()
-    ))
-
-    LifeGame(**args).run()
+        cls(**{
+            param: arg
+            for param, arg in parser.parse_args()._get_kwargs()
+            if arg is not None
+        }).run()
 
 
 if __name__ == '__main__':
-    main()
+    LifeGame.run_from_command_line()
