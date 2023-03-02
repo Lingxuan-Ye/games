@@ -185,7 +185,7 @@ class RevertibleFrame(Frame, Generic[T]):
 
     def init_frame(self) -> Self:
         super().init_frame()
-        self._prev = self._frame.copy()
+        self._prev = np.empty(self._shape, self.dtype)
         return self
 
     @final

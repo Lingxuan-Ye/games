@@ -1,7 +1,7 @@
 import argparse
 import asyncio
 import subprocess
-from random import choice
+from random import choice, sample
 from textwrap import indent
 from typing import Literal, NamedTuple, Sequence
 
@@ -9,11 +9,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 try:
-    from .const import SYMBOLS
+    from .const import ANSI_CODE, SYMBOLS
     from .models.frame import RevertibleFrame
 except ImportError:
-    from const import SYMBOLS
+    from const import ANSI_CODE, SYMBOLS
     from models.frame import RevertibleFrame
+
+CellStyle = Literal['alpha', 'binary', 'block', 'emoji', 'legacy', 'palette']
 
 
 class Cell:
@@ -21,13 +23,17 @@ class Cell:
     dead: str
     alive: str
 
-    def __init__(
-        self,
-        type: Literal['alpha', 'binary', 'block', 'emoji', 'legacy'] = 'block'
-    ) -> None:
-        for k, v in SYMBOLS[type.strip().lower()].items():
-            if isinstance(v, list):
-                v = choice(v)
+    def __init__(self, style: CellStyle) -> None:
+        style_str = str(style).strip().lower()
+        if style_str == 'palette':
+            dead, alive = sample(list(ANSI_CODE['background'].values()), 2)
+            self.dead = dead + '  ' + ANSI_CODE['charstyle']['reset']
+            self.alive = alive + '  ' + ANSI_CODE['charstyle']['reset']
+            return
+        for k, v in SYMBOLS[style_str].items():
+            v = choice(v)
+            if v == 'block':
+                v *= 2
             if k == 'dead':
                 self.dead = v
             elif k == 'alive':
@@ -42,8 +48,6 @@ class Padding(NamedTuple):
 
 class LifeGame:
 
-    RESET_CURSOR = '\033[1;1H'
-
     frame_duration: float
 
     __cell: Cell
@@ -51,7 +55,7 @@ class LifeGame:
     __padding: Padding
     __locs: tuple[NDArray, ...]
     __rlocs: tuple[NDArray, ...]
-    __repr_cache: NDArray
+    __render_cache: NDArray
     __print_queue: asyncio.Queue[str]
 
     def __init__(
@@ -59,25 +63,26 @@ class LifeGame:
         nrows: int = 32,
         ncols: int = 32,
         *,
-        cell: Literal['alpha', 'binary', 'block', 'emoji', 'legacy'] = 'block',
-        fps: int | float = 24,
+        cell_style: CellStyle = 'palette',
+        fps: float = 24.0,
         row_offset: int = 1,
         col_offset: int = 2,
         seed: int | None = None
     ) -> None:
-        self.__cell = Cell(cell)
+        if seed is not None:
+            self.seed = seed
+        self.__cell = Cell(cell_style)
         self.__frame = RevertibleFrame((nrows, ncols), np.bool_)
         shape = self.__frame.shape
         self.__frame.prev[:] = np.random.randint(0, 2, shape, np.bool_)
-        self.frame_duration = 1 / fps
+        self.__frame.revert()
+        self.fps = fps
         self.__padding = Padding('\n' * row_offset, ' ' * col_offset)
-        if seed is not None:
-            self.seed = seed
         loc_dtype = np.min_scalar_type(np.max(shape))
         self.__locs = np.ix_(np.empty(3, loc_dtype), np.empty(3, loc_dtype))
         self.__rlocs = np.ix_([-1, 0, 1], [-1, 0, 1])
-        self.__repr_cache = np.empty(shape, dtype='<U2')
-        self.__print_queue = asyncio.Queue()
+        self.__render_cache = np.empty(shape, dtype='<U11')
+        self.__print_queue = asyncio.Queue(8)
 
     @property
     def cell(self) -> Cell:
@@ -88,6 +93,14 @@ class LifeGame:
         self.__frame
 
     @property
+    def fps(self) -> float:
+        return 1 / self.frame_duration
+
+    @fps.setter
+    def fps(self, __value: float) -> None:
+        self.frame_duration = 1 / __value
+
+    @property
     def seed(self) -> int:
         return np.random.get_state()[1][0]  # type: ignore
 
@@ -95,42 +108,46 @@ class LifeGame:
     def seed(self, __value: int) -> None:
         np.random.seed(__value)
 
-    async def sleep(self) -> None:
-        await asyncio.sleep(self.frame_duration)
-
     def generate(self) -> None:
-        current, next = self.__frame.prev, self.__frame.frame
+        current_frame, next_frame = self.__frame.prev, self.__frame.frame
         shape = self.__frame.shape
-        for index, is_alive in np.ndenumerate(current):
+        for index, is_alive in np.ndenumerate(current_frame):
             self.__locs[0][:] = (index[0] + self.__rlocs[0]) % shape[0]
             self.__locs[1][:] = (index[1] + self.__rlocs[1]) % shape[1]
-            count = current[self.__locs].sum() - is_alive
-            if (not is_alive) and (count == 3):
-                next[index] = 1
-            elif is_alive and (count not in {2, 3}):
-                next[index] = 0
+            neighbor_count = np.sum(current_frame[self.__locs]) - is_alive
+            # not every cell is updated, which means that
+            # `next_frame` should be equal to `current_frame`
+            # at the very beginning!
+            if (not is_alive) and (neighbor_count == 3):
+                next_frame[index] = 1
+            elif is_alive and (neighbor_count not in {2, 3}):
+                next_frame[index] = 0
 
-    async def repr(self) -> None:
-        self.generate()
-        current = self.__frame.prev
-        self.__repr_cache[current] = self.cell.alive
-        self.__repr_cache[~current] = self.cell.dead
-        self.__frame.record()
-        await self.__print_queue.put(
-            '\n'.join(''.join(row) for row in self.__repr_cache)
-        )
+    async def render(self) -> None:
+        while True:
+            self.generate()
+            current_frame = self.__frame.prev
+            self.__render_cache[:] = self.cell.dead
+            self.__render_cache[current_frame] = self.cell.alive
+            self.__frame.record()
+            await self.__print_queue.put(
+                '\n'.join(''.join(row) for row in self.__render_cache)
+            )
+            await asyncio.sleep(0)
 
     async def print(self) -> None:
-        repr_ = await self.__print_queue.get()
-        padded = self.__padding.top + indent(repr_, self.__padding.left)
-        print(self.RESET_CURSOR + padded)
+        while True:
+            rendered = await self.__print_queue.get()
+            padded = self.__padding.top + indent(rendered, self.__padding.left)
+            print(ANSI_CODE['cursor']['reset'] + padded)
+            self.__print_queue.task_done()
+            await asyncio.sleep(self.frame_duration)
 
     async def _run(self) -> None:
-        subprocess.run('clear || cls', shell=True)
-        while True:
-            await asyncio.gather(self.sleep(), self.repr(), self.print())
+        await asyncio.gather(self.render(), self.print())
 
     def run(self) -> None:
+        subprocess.run('clear || cls', shell=True)
         asyncio.run(self._run())
 
 
@@ -139,7 +156,7 @@ def main(args: Sequence | None = None) -> None:
     HELP = {
         'nrows': 'number of rows',
         'ncols': 'number of columns',
-        'cell': 'specify symbol pair to represent cell status (dead / alive)',
+        'cell': 'specify cell style',
         'fps': 'frames per second',
         'row-offset': 'margin width to the top',
         'col-offset': 'margin width to the left',
@@ -154,8 +171,9 @@ def main(args: Sequence | None = None) -> None:
 
     parser.add_argument(
         '--cell',
-        choices=('alpha', 'binary', 'block', 'emoji', 'legacy'),
-        help=HELP['cell']
+        choices=('alpha', 'binary', 'block', 'emoji', 'legacy', 'palette'),
+        help=HELP['cell'],
+        dest='cell_style'
     )
 
     parser.add_argument('--fps', type=float, help=HELP['fps'])
