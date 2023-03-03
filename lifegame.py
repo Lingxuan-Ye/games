@@ -40,10 +40,22 @@ class Cell:
                 self.alive = v
 
 
-class Padding(NamedTuple):
+class Padding:
 
-    top: str
-    left: str
+    __top: str
+    __left: str
+
+    def __init__(self, top_margin: int, left_margin: int) -> None:
+        self.__top = '\n' * top_margin
+        self.__left = ' ' * left_margin
+
+    @property
+    def top(self) -> str:
+        return self.__top
+
+    @property
+    def left(self) -> str:
+        return self.__left
 
 
 class LifeGame:
@@ -77,7 +89,7 @@ class LifeGame:
         self.__frame.prev[:] = np.random.randint(0, 2, shape, np.bool_)
         self.__frame.revert()
         self.fps = fps
-        self.__padding = Padding('\n' * row_offset, ' ' * col_offset)
+        self.__padding = Padding(row_offset, col_offset)
         loc_dtype = np.min_scalar_type(np.max(shape))
         self.__locs = np.ix_(np.empty(3, loc_dtype), np.empty(3, loc_dtype))
         self.__rlocs = np.ix_([-1, 0, 1], [-1, 0, 1])
