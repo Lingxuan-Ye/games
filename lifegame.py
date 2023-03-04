@@ -10,13 +10,13 @@ from numpy.typing import NDArray
 from scipy.signal import convolve2d
 
 try:
-    from .library.const import ANSI_CODE, SYMBOLS
-    from .library.decorators.lifecycle import gameover
-    from .library.models.frame import RevertibleFrame
+    from .lib.const import ANSI_CODE, SYMBOLS
+    from .lib.decorators.lifecycle import gameover
+    from .lib.models.frame import RevertibleFrame
 except ImportError:
-    from library.const import ANSI_CODE, SYMBOLS
-    from library.decorators.lifecycle import gameover
-    from library.models.frame import RevertibleFrame
+    from lib.const import ANSI_CODE, SYMBOLS
+    from lib.decorators.lifecycle import gameover
+    from lib.models.frame import RevertibleFrame
 
 CellStyle = Literal['alpha', 'binary', 'block', 'emoji', 'legacy', 'palette']
 
