@@ -10,11 +10,13 @@ from numpy.typing import NDArray
 from scipy.signal import convolve2d
 
 try:
-    from .const import ANSI_CODE, SYMBOLS
-    from .models.frame import RevertibleFrame
+    from .library.const import ANSI_CODE, SYMBOLS
+    from .library.decorators.lifecycle import gameover
+    from .library.models.frame import RevertibleFrame
 except ImportError:
-    from const import ANSI_CODE, SYMBOLS
-    from models.frame import RevertibleFrame
+    from library.const import ANSI_CODE, SYMBOLS
+    from library.decorators.lifecycle import gameover
+    from library.models.frame import RevertibleFrame
 
 CellStyle = Literal['alpha', 'binary', 'block', 'emoji', 'legacy', 'palette']
 
@@ -153,6 +155,7 @@ class LifeGame:
         asyncio.run(self._run())
 
 
+@gameover
 def main(args: Sequence | None = None) -> None:
 
     HELP = {
