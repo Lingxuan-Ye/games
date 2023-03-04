@@ -4,62 +4,73 @@ Lifegame
 Use bit to represent status may be more efficient but, nah.
 """
 import argparse
+import asyncio
 import subprocess
 from random import choice
-from time import sleep
-from typing import Literal, Sequence
+from typing import Literal
 
 import numpy as np
 
 
 class LifeGame:
 
-    RLOCS = np.array(
-        [[x, y] for x in (-1, 0, 1) for y in (-1, 0, 1) if x or y]
-    )
     SYMBOLS = {
         'dead': {
-            'alpha': 'O',
+            'alpha': 'X',
             'block': '⬜',
             'digit': '0',
             'emoji': '😅😇🤪😴🤢🤮🥶😰😭'
         },
         'alive': {
-            'alpha': 'X',
+            'alpha': 'O',
             'block': '⬛',
             'digit': '1',
             'emoji': '🤣🥰😘😋🤗🤤🥵🥳😤'
         }
     }
+    RLOCS = np.array([(-1, 0, 1)] * 2, dtype=np.int8)
 
-    shape: tuple[int, int]
-    fps: int | float
+    shape: np.ndarray
+    frames_per_second: int | float
 
-    __frame: np.ndarray
-    __prev: np.ndarray
-    __loc: np.ndarray
     __symbols: tuple[str, str]
-    __to_print: list[str]
+    __row_offset: int
+    __top_padding: str
+    __col_offset: int
+    __left_padding: str
 
-    __margin: int
-    __margin_top: str
-    __margin_left: str
+    __next_frame: np.ndarray
+    __current_frame: np.ndarray
+    __to_print: list[str]
+    __locs: np.ndarray
 
     def __init__(
         self,
-        shape: Sequence[int] = (32, 32),
+        nrows: int = 32,
+        ncols: int = 32,
+        frames_per_second: int | float = 10,
         symbol_type: Literal['alpha', 'block', 'digit', 'emoji'] = 'block',
-        margin: int = 2,
-        fps: int | float = 60
+        row_offset: int = 1,
+        col_offset: int = 2,
+        seed: int | None = None
     ) -> None:
-        self.shape = (shape[0], shape[1])
+
+        self.shape = np.array([nrows, ncols])
+        self.frames_per_second = frames_per_second
+        self.row_offset = row_offset
+        self.col_offset = col_offset
+        if seed is not None:
+            self.seed = seed
         self.set_symbols(symbol_type)
-        self.margin = margin
-        self.fps = fps
-        self.__frame = np.random.choice((0, 1), self.shape)
-        self.__prev = self.__frame.copy()
-        self.__loc = np.empty(2, dtype=np.int8)
+
+        init_frame = np.random.randint(0, 2, self.shape, dtype=np.uint8)
+        self.__current_frame = init_frame
+        self.__next_frame = init_frame.copy()
         self.__to_print = []
+        self.__locs = np.empty(
+            shape=(2, 3),
+            dtype=np.min_scalar_type(np.max(self.shape))
+        )
 
     @property
     def symbols(self) -> tuple[str, str]:
@@ -76,98 +87,143 @@ class LifeGame:
         )
 
     @property
-    def margin(self) -> int:
-        return self.__margin
+    def row_offset(self) -> int:
+        return self.__row_offset
 
-    @margin.setter
-    def margin(self, __value: int) -> None:
-        self.__margin_top = '\n' * __value
-        self.__margin_left = ' ' * __value
-        self.__margin = __value
+    @row_offset.setter
+    def row_offset(self, __value: int) -> None:
+        self.__top_padding = '\n' * __value
+        self.__row_offset = __value
 
-    def print(self, *arg, **kwargs) -> None:
+    @property
+    def col_offset(self) -> int:
+        return self.__col_offset
+
+    @col_offset.setter
+    def col_offset(self, __value: int) -> None:
+        self.__left_padding = ' ' * __value
+        self.__col_offset = __value
+
+    @property
+    def seed(self) -> int:
+        return np.random.get_state()[1][0]  # type: ignore
+
+    @seed.setter
+    def seed(self, __value: int) -> None:
+        np.random.seed(__value)
+
+    async def print(self, *args, **kwargs) -> None:
         self.__to_print.clear()
-        for row in self.__frame:
+        for row in self.__current_frame:
             self.__to_print.append(
-                self.__margin_left + ''.join(self.__symbols[i] for i in row)
+                self.__left_padding + ''.join(self.__symbols[i] for i in row)
             )
-        print(self.__margin_top + '\n'.join(self.__to_print), *arg, **kwargs)
+        message = self.__top_padding + '\n'.join(self.__to_print)
+        print(f'\033[1;1H{message}', *args, **kwargs)
 
-    def generate(self) -> None:
-        for index, is_alive in np.ndenumerate(self.__prev):
-            count = 0
-            for rloc in self.RLOCS:
-                self.__loc[:] = (index + rloc) % self.shape
-                if self.__prev[*self.__loc]:
-                    count += 1
+    async def generate(self) -> None:
+        for index, is_alive in np.ndenumerate(self.__current_frame):
+            self.__locs[:] = (
+                np.array(list(index)).reshape(2, 1) + self.RLOCS
+            ) % self.shape.reshape(2, 1)  # mod in case index out of range
+            count = self.__current_frame[np.ix_(*self.__locs)].sum() - is_alive
             if (not is_alive) and (count == 3):
-                self.__frame[index] = 1
+                self.__next_frame[index] = 1
             elif is_alive and (count not in {2, 3}):
-                self.__frame[index] = 0
-        self.__prev[:] = self.__frame
+                self.__next_frame[index] = 0
+
+    async def __run(self) -> None:
+        frame_duration = 1 / self.frames_per_second
+        subprocess.run('clear || cls', shell=True)
+        while True:
+            await asyncio.gather(
+                asyncio.sleep(frame_duration),
+                self.print(),
+                self.generate()
+            )
+            self.__current_frame[:] = self.__next_frame
 
     def run(self) -> None:
-        frame_duration = 1 / self.fps
-        while True:
-            subprocess.run('clear || cls', shell=True)
-            self.print()
-            self.generate()
-            sleep(frame_duration)
+        asyncio.run(self.__run())
 
+    @classmethod
+    def run_from_command_line(cls) -> None:
 
-def main() -> None:
+        HELP = {
+            'nrows': 'number of rows',
+            'ncols': 'number of columns',
+            'fps': 'frames per second',
+            'symbol-type': 'symbols to represent status (dead / alive)',
+            'row-offset': 'margin width to the top',
+            'col-offset': 'margin width to the left',
+            'seed': 'set seed (this does not affect emoji selection)'
+        }
 
-    parser = argparse.ArgumentParser('Life Game')
+        parser = argparse.ArgumentParser('Life Game')
 
-    parser.add_argument(
-        '--nrows',
-        default=32,
-        type=int,
-        help='number of rows',
-        metavar=''
-    )
+        parser.add_argument(
+            '-r',
+            '--nrows',
+            type=int,
+            help=HELP['nrows'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--ncols',
-        default=32,
-        type=int,
-        help='number of columns',
-        metavar=''
-    )
+        parser.add_argument(
+            '-c',
+            '--ncols',
+            type=int,
+            help=HELP['ncols'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--symbols',
-        default='block',
-        choices=('alpha', 'block', 'digit', 'emoji'),
-        help='symbols to represent status (dead / alive)',
-        metavar=''
-    )
+        parser.add_argument(
+            '-f',
+            '--fps',
+            type=float,
+            help=HELP['fps'],
+            metavar='',
+            dest='frames_per_second'
+        )
 
-    parser.add_argument(
-        '--fps',
-        default=60,
-        type=int,
-        help='frames per second',
-        metavar=''
-    )
+        parser.add_argument(
+            '-s',
+            '--symbol-type',
+            choices=('alpha', 'block', 'digit', 'emoji'),
+            help=HELP['symbol-type'],
+            metavar=''
+        )
 
-    parser.add_argument(
-        '--margin',
-        default=2,
-        type=int,
-        help='margin width',
-        metavar=''
-    )
+        parser.add_argument(
+            '-R',
+            '--row-offset',
+            type=int,
+            help=HELP['row-offset'],
+            metavar=''
+        )
 
-    args = parser.parse_args()
+        parser.add_argument(
+            '-C',
+            '--col-offset',
+            type=int,
+            help=HELP['col-offset'],
+            metavar=''
+        )
 
-    LifeGame(
-        shape=(args.nrows, args.ncols),
-        symbol_type=args.symbols,
-        margin=args.margin,
-        fps=args.fps
-    ).run()
+        parser.add_argument(
+            '-S',
+            '--seed',
+            type=int,
+            help=HELP['seed'],
+            metavar=''
+        )
+
+        cls(**{
+            param: arg
+            for param, arg in parser.parse_args()._get_kwargs()
+            if arg is not None
+        }).run()
 
 
 if __name__ == '__main__':
-    main()
+    LifeGame.run_from_command_line()
