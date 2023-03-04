@@ -3,17 +3,20 @@ import asyncio
 import subprocess
 from random import choice, sample
 from textwrap import indent
-from typing import Literal, NamedTuple, Sequence
+from typing import Literal, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.signal import convolve2d
 
 try:
-    from .const import ANSI_CODE, SYMBOLS
-    from .models.frame import RevertibleFrame
+    from .lib.const import ANSI_CODE, SYMBOLS
+    from .lib.decorators.lifecycle import gameover
+    from .lib.models.frame import RevertibleFrame
 except ImportError:
-    from const import ANSI_CODE, SYMBOLS
-    from models.frame import RevertibleFrame
+    from lib.const import ANSI_CODE, SYMBOLS
+    from lib.decorators.lifecycle import gameover
+    from lib.models.frame import RevertibleFrame
 
 CellStyle = Literal['alpha', 'binary', 'block', 'emoji', 'legacy', 'palette']
 
@@ -40,21 +43,34 @@ class Cell:
                 self.alive = v
 
 
-class Padding(NamedTuple):
+class Padding:
 
-    top: str
-    left: str
+    __top: str
+    __left: str
+
+    def __init__(self, top_margin: int, left_margin: int) -> None:
+        self.__top = '\n' * top_margin
+        self.__left = ' ' * left_margin
+
+    @property
+    def top(self) -> str:
+        return self.__top
+
+    @property
+    def left(self) -> str:
+        return self.__left
 
 
 class LifeGame:
+
+    KERNEL = np.array([[1, 1, 1], [1, -9, 1], [1, 1, 1]], dtype=np.int8)
+    KEEP_ALIVE = np.array([-7, -6], dtype=np.int8)
 
     frame_duration: float
 
     __cell: Cell
     __frame: RevertibleFrame
     __padding: Padding
-    __locs: tuple[NDArray, ...]
-    __rlocs: tuple[NDArray, ...]
     __render_cache: NDArray
     __print_queue: asyncio.Queue[str]
 
@@ -77,10 +93,7 @@ class LifeGame:
         self.__frame.prev[:] = np.random.randint(0, 2, shape, np.bool_)
         self.__frame.revert()
         self.fps = fps
-        self.__padding = Padding('\n' * row_offset, ' ' * col_offset)
-        loc_dtype = np.min_scalar_type(np.max(shape))
-        self.__locs = np.ix_(np.empty(3, loc_dtype), np.empty(3, loc_dtype))
-        self.__rlocs = np.ix_([-1, 0, 1], [-1, 0, 1])
+        self.__padding = Padding(row_offset, col_offset)
         self.__render_cache = np.empty(shape, dtype='<U11')
         self.__print_queue = asyncio.Queue(8)
 
@@ -109,26 +122,17 @@ class LifeGame:
         np.random.seed(__value)
 
     def generate(self) -> None:
-        current_frame, next_frame = self.__frame.prev, self.__frame.frame
-        shape = self.__frame.shape
-        for index, is_alive in np.ndenumerate(current_frame):
-            self.__locs[0][:] = (index[0] + self.__rlocs[0]) % shape[0]
-            self.__locs[1][:] = (index[1] + self.__rlocs[1]) % shape[1]
-            neighbor_count = np.sum(current_frame[self.__locs]) - is_alive
-            # not every cell is updated, which means that
-            # `next_frame` should be equal to `current_frame`
-            # at the very beginning!
-            if (not is_alive) and (neighbor_count == 3):
-                next_frame[index] = 1
-            elif is_alive and (neighbor_count not in {2, 3}):
-                next_frame[index] = 0
+        current, next_ = self.__frame.prev, self.__frame.frame
+        result = convolve2d(current, self.KERNEL, mode='same', boundary='wrap')
+        next_[result == 3] = True
+        next_[(~np.isin(result, self.KEEP_ALIVE)) & (result < 0)] = False
 
     async def render(self) -> None:
         while True:
             self.generate()
-            current_frame = self.__frame.prev
+            current = self.__frame.prev
             self.__render_cache[:] = self.cell.dead
-            self.__render_cache[current_frame] = self.cell.alive
+            self.__render_cache[current] = self.cell.alive
             self.__frame.record()
             await self.__print_queue.put(
                 '\n'.join(''.join(row) for row in self.__render_cache)
@@ -151,6 +155,7 @@ class LifeGame:
         asyncio.run(self._run())
 
 
+@gameover
 def main(args: Sequence | None = None) -> None:
 
     HELP = {
@@ -195,6 +200,7 @@ def main(args: Sequence | None = None) -> None:
             if value is not None
         }
     ).run()
+
 
 if __name__ == '__main__':
     main()
