@@ -42,6 +42,10 @@ class Cell:
             elif k == 'alive':
                 self.alive = v
 
+    @property
+    def dtype(self) -> str:
+        return f'<U{max(len(self.dead), len(self.alive))}'
+
 
 class Padding:
 
@@ -66,9 +70,9 @@ class LifeGame:
     KERNEL = np.array([[1, 1, 1], [1, -9, 1], [1, 1, 1]], dtype=np.int8)
     KEEP_ALIVE = np.array([-7, -6], dtype=np.int8)
 
+    cell: Cell
     frame_duration: float
 
-    __cell: Cell
     __frame: RevertibleFrame
     __padding: Padding
     __render_cache: NDArray
@@ -87,19 +91,15 @@ class LifeGame:
     ) -> None:
         if seed is not None:
             self.seed = seed
-        self.__cell = Cell(cell_style)
+        self.cell = Cell(cell_style)
         self.__frame = RevertibleFrame((nrows, ncols), np.bool_)
         shape = self.__frame.shape
         self.__frame.prev[:] = np.random.randint(0, 2, shape, np.bool_)
         self.__frame.revert()
         self.fps = fps
         self.__padding = Padding(row_offset, col_offset)
-        self.__render_cache = np.empty(shape, dtype='<U11')
+        self.__render_cache = np.empty(shape, dtype=self.cell.dtype)
         self.__print_queue = asyncio.Queue(8)
-
-    @property
-    def cell(self) -> Cell:
-        return self.__cell
 
     @property
     def frame(self) -> RevertibleFrame:
@@ -151,6 +151,7 @@ class LifeGame:
         await asyncio.gather(self.render(), self.print())
 
     def run(self) -> None:
+        self.__render_cache.astype(self.cell.dtype)
         subprocess.run('clear || cls', shell=True)
         asyncio.run(self._run())
 
