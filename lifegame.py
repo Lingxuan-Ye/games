@@ -35,7 +35,7 @@ class Cell:
             return
         for k, v in SYMBOLS[style_str].items():
             v = choice(v)
-            if v == 'block':
+            if style_str == 'block':
                 v *= 2
             if k == 'dead':
                 self.dead = v
